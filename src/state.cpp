@@ -248,7 +248,7 @@ void State::attempt_to_process_delayed_changes()
 void State::open()
 {
     DBusErrorGuard err;
-    con = dbus_bus_get(DBusBusType::DBUS_BUS_SYSTEM, err.get());
+    con = dbus_bus_get(DBusBusType::DBUS_BUS_SESSION, err.get());
     err.throw_error();
 
     dbus_connection_set_dispatch_status_function(con, dbus_dispatch_status_function, this, nullptr);
