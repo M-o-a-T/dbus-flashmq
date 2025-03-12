@@ -73,5 +73,6 @@ target_link_libraries(flashmq-dbus-plugin pthread dbus-1 resolv crypt)
 
 target_link_libraries(flashmq-dbus-plugin-tests pthread dbus-1 resolv crypt)
 
-install(TARGETS flashmq-dbus-plugin-tests RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(TARGETS flashmq-dbus-plugin DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/flashmq")
+# install(TARGETS flashmq-dbus-plugin-tests RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS flashmq-dbus-plugin DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/flashmq"
+        PERMISSIONS OWNER_READ GROUP_READ WORLD_READ)
