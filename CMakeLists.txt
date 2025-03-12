@@ -15,9 +15,6 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(DBUS REQUIRED IMPORTED_TARGET dbus-1)
 
 add_library(flashmq-dbus-plugin SHARED
-  vendor/json.hpp
-  vendor/flashmq_plugin.h
-
   src/dbus_functions.h
   src/flashmq-dbus-plugin.cpp 
   src/dbus_functions.cpp
@@ -42,9 +39,6 @@ add_library(flashmq-dbus-plugin SHARED
 )
 
 add_executable(flashmq-dbus-plugin-tests
-  vendor/json.hpp
-  vendor/flashmq_plugin.h
-
   src/flashmq-dbus-plugin-tests.h
   src/dbus_functions.h
   src/dbus_functions.cpp

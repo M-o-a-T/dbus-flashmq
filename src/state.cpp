@@ -1,5 +1,6 @@
 #include "state.h"
 
+#include <flashmq_plugin.h>
 #include <cstring>
 #include <unistd.h>
 #include <sys/epoll.h>
@@ -12,7 +13,6 @@
 
 #include "dbus_functions.h"
 #include "dbusutils.h"
-#include "vendor/flashmq_plugin.h"
 #include "dbusmessageguard.h"
 #include "utils.h"
 #include "types.h"

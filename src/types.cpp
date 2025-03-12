@@ -1,10 +1,9 @@
-#include "types.h"
-
+#include <flashmq_plugin.h>
+#include <nlohmann/json.hpp>
 #include <sstream>
 
+#include "types.h"
 #include "exceptions.h"
-#include "vendor/flashmq_plugin.h"
-#include "vendor/json.hpp"
 
 
 ValueMinMax &ValueMinMax::operator=(const ValueMinMax &other)

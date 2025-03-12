@@ -1,8 +1,7 @@
-#include "queuedtasks.h"
-
+#include <flashmq_plugin.h>
 #include <list>
 
-#include "vendor/flashmq_plugin.h"
+#include "queuedtasks.h"
 
 bool QueuedTask::operator<(const QueuedTask &rhs) const
 {

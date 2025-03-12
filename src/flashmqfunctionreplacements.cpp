@@ -1,6 +1,6 @@
 //#include "flashmqfunctionreplacements.h"
 
-#include "vendor/flashmq_plugin.h"
+#include <flashmq_plugin.h>
 
 #include <ctime>
 #include <iostream>

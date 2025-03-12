@@ -1,7 +1,8 @@
+#include <flashmq_plugin.h>
+#include <cstring>
+
 #include "testerglobals.h"
 #include "sys/epoll.h"
-#include <cstring>
-#include "vendor/flashmq_plugin.h"
 
 TesterGlobals::TesterGlobals()
 {

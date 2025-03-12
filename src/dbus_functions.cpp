@@ -1,5 +1,6 @@
+#include <flashmq_plugin.h>
+
 #include "dbus_functions.h"
-#include "vendor/flashmq_plugin.h"
 #include "state.h"
 #include "utils.h"
 #include "dbusmessageguard.h"

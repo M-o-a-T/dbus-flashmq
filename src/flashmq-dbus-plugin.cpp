@@ -1,4 +1,4 @@
-#include "vendor/flashmq_plugin.h"
+#include <flashmq_plugin.h>
 #include <dbus-1.0/dbus/dbus.h>
 #include <stdexcept>
 #include <sys/epoll.h>

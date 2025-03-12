@@ -7,7 +7,7 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
-#include "vendor/json.hpp"
+#include <nlohmann/json.hpp>
 
 // Explicitely documented in velib_python
 #define EMPTY_ARRAY_AS_NULL_VALUE_TYPE "i"

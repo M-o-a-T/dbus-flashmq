@@ -1,9 +1,9 @@
-#include "vevariant.h"
+#include <flashmq_plugin.h>
 
 #include <sstream>
 #include <cassert>
 
-#include "vendor/flashmq_plugin.h"
+#include "vevariant.h"
 #include "exceptions.h"
 #include "dbusmessageiteropencontainerguard.h"
 #include "dbusmessageitersignature.h"

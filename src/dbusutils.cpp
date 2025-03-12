@@ -1,5 +1,6 @@
+#include <flashmq_plugin.h>
+
 #include "dbusutils.h"
-#include "vendor/flashmq_plugin.h"
 #include "exceptions.h"
 #include "dbusmessageitersignature.h"
 

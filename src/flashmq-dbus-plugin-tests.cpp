@@ -1,8 +1,8 @@
 #include <sys/epoll.h>
 #include <cstring>
+#include <flashmq_plugin.h>
 
 #include "flashmq-dbus-plugin-tests.h"
-#include "vendor/flashmq_plugin.h"
 #include "testerglobals.h"
 #include "utils.h"
 
