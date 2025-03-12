@@ -1,0 +1,10 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Source: https://github.com/victronenergy/dbus-flashmq
+Upstream-Name: dbus-flashmq
+Upstream-Contact: Wiebe Cazemier <wiebe@ytec.nl>
+
+Files:
+  *
+Copyright:
+  2023 Victron Energy BV
+License: MIT

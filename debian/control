@@ -1,0 +1,27 @@
+Source: dbus-flashmq
+Section: net
+Priority: optional
+Maintainer: Matthias Urlichs <matthias@urlichs.de>
+Rules-Requires-Root: no
+Build-Depends:
+ debhelper-compat (= 13),
+ cmake,
+ libdbus-1-dev,
+ nlohmann-json3-dev,
+ flashmq-dev,
+Standards-Version: 4.7.0
+Homepage: https://github.com/victronenergy/dbus-flashmq
+Vcs-Git: https://github.com/victronenergy/dbus-flashmq
+
+Package: dbus-flashmq
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ flashmq,
+Description: Victron DBus plugin for flashmq
+ This is the plugin that makes FlashMQ, the MQTT Broker used on Venus OS, a
+ DBus aware MQTT broker. It also supports receiving requests to change values
+ on the local DBus.
+ .
+ This version uses the session DBus, for compatibility with Venusian.
