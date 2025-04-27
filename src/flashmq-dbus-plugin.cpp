@@ -13,28 +13,33 @@
 
 // https://dbus.freedesktop.org/doc/api/html/index.html
 
+extern "C"
 int flashmq_plugin_version()
 {
     return FLASHMQ_PLUGIN_VERSION;
 }
 
+extern "C"
 void flashmq_plugin_allocate_thread_memory(void **thread_data, std::unordered_map<std::string, std::string> &plugin_opts)
 {
     State *state = new State();
     *thread_data = state;
 }
 
+extern "C"
 void flashmq_plugin_deallocate_thread_memory(void *thread_data, std::unordered_map<std::string, std::string> &plugin_opts)
 {
     State *state = static_cast<State*>(thread_data);
     delete state;
 }
 
+extern "C"
 void flashmq_plugin_main_init(std::unordered_map<std::string, std::string> &plugin_opts)
 {
     dbus_threads_init_default();
 }
 
+extern "C"
 void flashmq_plugin_init(void *thread_data, std::unordered_map<std::string, std::string> &plugin_opts, bool reloading)
 {
     State *state = static_cast<State*>(thread_data);
@@ -64,6 +69,7 @@ void flashmq_plugin_init(void *thread_data, std::unordered_map<std::string, std:
     state->start_one_second_timer();
 }
 
+extern "C"
 void flashmq_plugin_deinit(void *thread_data, std::unordered_map<std::string, std::string> &plugin_opts, bool reloading)
 {
     // As of yet, we don't do reload actions.
@@ -84,6 +90,7 @@ void flashmq_plugin_deinit(void *thread_data, std::unordered_map<std::string, st
     state->write_bridge_connection_state(BRIDGE_RPC, std::optional<bool>(), BRIDGE_DEACTIVATED_STRING);
 }
 
+extern "C"
 AuthResult flashmq_plugin_login_check(void *thread_data, const std::string &clientid, const std::string &username, const std::string &password,
                                       const std::vector<std::pair<std::string, std::string>> *userProperties, const std::weak_ptr<Client> &client)
 {
@@ -141,6 +148,7 @@ AuthResult flashmq_plugin_login_check(void *thread_data, const std::string &clie
     return AuthResult::login_denied;
 }
 
+extern "C"
 bool flashmq_plugin_alter_publish(void *thread_data, const std::string &clientid, std::string &topic, const std::vector<std::string> &subtopics,
                                   std::string_view payload, uint8_t &qos, bool &retain, std::vector<std::pair<std::string, std::string>> *userProperties)
 {
@@ -173,6 +181,7 @@ bool flashmq_plugin_alter_publish(void *thread_data, const std::string &clientid
 /**
  * @brief using ACL hook as 'on_message' handler.
  */
+extern "C"
 AuthResult flashmq_plugin_acl_check(void *thread_data, const AclAccess access, const std::string &clientid, const std::string &username,
                                     const std::string &topic, const std::vector<std::string> &subtopics, std::string_view payload,
                                     const uint8_t qos, const bool retain, const std::vector<std::pair<std::string, std::string>> *userProperties)
@@ -333,6 +342,7 @@ AuthResult flashmq_plugin_acl_check(void *thread_data, const AclAccess access, c
     return AuthResult::success;
 }
 
+extern "C"
 void flashmq_plugin_poll_event_received(void *thread_data, int fd, uint32_t events, const std::weak_ptr<void> &p)
 {
     //flashmq_logf(LOG_DEBUG, "flashmq_plugin_poll_event_received. Epoll flags: %d", events);
