@@ -1,3 +1,9 @@
+dbus-flashmq (12.2) unstable; urgency=medium
+
+  * Depend on flashmq-dev >= 1.20.
+
+ -- Matthias Urlichs <matthias@urlichs.de>  Sun, 27 Apr 2025 10:24:57 +0200
+
 dbus-flashmq (12.1) unstable; urgency=medium
 
   * Initial release.
