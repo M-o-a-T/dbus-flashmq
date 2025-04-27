@@ -184,7 +184,9 @@ bool flashmq_plugin_alter_publish(void *thread_data, const std::string &clientid
 extern "C"
 AuthResult flashmq_plugin_acl_check(void *thread_data, const AclAccess access, const std::string &clientid, const std::string &username,
                                     const std::string &topic, const std::vector<std::string> &subtopics, std::string_view payload,
-                                    const uint8_t qos, const bool retain, const std::vector<std::pair<std::string, std::string>> *userProperties)
+                                    const uint8_t qos, const bool retain, const std::optional<std::string> &correlationData,
+                                    const std::optional<std::string> &responseTopic,
+                                    const std::vector<std::pair<std::string, std::string>> *userProperties)
 {
     try
     {
