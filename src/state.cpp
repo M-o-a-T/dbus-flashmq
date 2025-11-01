@@ -18,12 +18,11 @@
 #include "types.h"
 #include "dbuserrorguard.h"
 #include "exceptions.h"
-#include "dbusmessageitersignature.h"
 #include "dbusmessageiteropencontainerguard.h"
 #include "dbuspendingmessagecallguard.h"
 #include "exceptions.h"
 
-using namespace std;
+using namespace dbus_flashmq;
 
 std::atomic_int State::instance_counter = 0;
 
@@ -60,9 +59,9 @@ State::~State()
 
 void State::get_unique_id()
 {
-    fstream file;
+    std::fstream file;
 
-    file.open("/data/venus/unique-id", ios::in);
+    file.open("/data/venus/unique-id", std::ios::in);
     getline(file, this->unique_vrm_id);
     trim(this->unique_vrm_id);
 
@@ -619,11 +618,19 @@ void State::initiate_broker_registration(uint32_t delay)
 void State::per_second_action()
 {
     this->period_task_id = 0;
+    start_one_second_timer();
 
     this->keepAliveTokens = KEEPALIVE_TOKENS;
+    this->loginTokensShortTerm = std::min<int>(LOGIN_TOKENS_SHORT_TERM, this->loginTokensShortTerm + 1);
 
-    auto f = std::bind(&State::per_second_action, this);
-    this->period_task_id = flashmq_add_task(f, ONE_SECOND_TIMER_INTERVAL);
+    if (this->longTermLoginTokensResetAt + std::chrono::hours(24) < std::chrono::steady_clock::now())
+    {
+        flashmq_logf(LOG_INFO, "Resetting long term login rate-limit state.");
+
+        this->loginTokensLongTerm = LOGIN_TOKENS_LONG_TERM;
+        this->longTermLoginTokensResetAt = std::chrono::steady_clock::now();
+        this->passwordHistory.clear();
+    }
 }
 
 void State::start_one_second_timer()
@@ -741,6 +748,15 @@ void State::write_all_bridge_connection_states_debounced()
     };
 
     write_all_bridge_states_task_id = flashmq_add_task(f, 2000);
+}
+
+void State::decrement_login_tokens()
+{
+    if (loginTokensShortTerm > 0)
+        loginTokensShortTerm--;
+
+    if (loginTokensLongTerm > 0)
+        loginTokensLongTerm--;
 }
 
 void State::scan_all_dbus_services()
@@ -957,4 +973,72 @@ std::chrono::seconds QueuedChangedItem::age() const
 bool BridgeConnectionState::operator==(const BridgeConnectionState &other) const
 {
     return msg == other.msg && connected == other.connected;
+}
+
+
+void State::clear_expired_privileged_clients()
+{
+    for (auto _ = this->privileged_network_clients.begin(); _ != this->privileged_network_clients.end();)
+    {
+        auto cur = _++;
+
+        if (cur->expired())
+            this->privileged_network_clients.erase(cur);
+    }
+}
+
+bool State::localhost_client(const std::weak_ptr<Client> &client) const
+{
+    if (client.expired())
+        return false;
+
+    struct sockaddr_storage addr_mem;
+    struct sockaddr *addr = reinterpret_cast<sockaddr*>(&addr_mem);
+    socklen_t addrlen = sizeof(addr_mem);
+
+    flashmq_get_client_address_v4(client, nullptr, addr, &addrlen);
+    bool result = this->match_local_net(addr);
+    return result;
+}
+
+/**
+ * Result can be used in direct boolean expression, but it also gives you the client if you want it,
+ * for a localhost-check for instance.
+ */
+IsPrivilegedUser State::is_privileged_user(const std::string &clientid, const std::string &username) const
+{
+    IsPrivilegedUser result;
+
+    if (username_is_bridge(username))
+    {
+        result.privileged = true;
+        return result;
+    }
+
+    std::weak_ptr<Session> session;
+    flashmq_get_session_pointer(clientid, username, session);
+
+    if (session.expired())
+    {
+        result.privileged = false;
+        return result;
+    }
+
+    std::weak_ptr<Client> client;
+    flashmq_get_client_pointer(session, client);
+
+    if (client.expired())
+    {
+        result.privileged = false;
+        return result;
+    }
+
+    result.privileged = this->privileged_network_clients.count(client) > 0;
+    result.client = client;
+    return result;
+}
+
+const std::weak_ptr<Client> &IsPrivilegedUser::get_client() const
+{
+    return this->client;
 }

@@ -4,6 +4,29 @@
 #include <unordered_map>
 #include <memory>
 #include "queuedtasks.h"
+#include "vendor/flashmq_plugin.h"
+
+extern int testCount;
+extern int failCount;
+
+#define FMQ_COMPARE(actual, expected) \
+if (!fmq_compare(actual, expected, #actual, #expected, __FILE__, __LINE__))\
+        return 1; \
+
+    bool fmq_assert(bool b, const char *failmsg, const char *actual, const char *expected, const char *file, int line);
+
+template <typename T1, typename T2>
+inline bool fmq_compare(const T1 &t1, const T2 &t2, const char *actual, const char *expected, const char *file, int line)
+{
+    return fmq_assert(t1 == t2, "Compared values are not the same", actual, expected, file, line);
+}
+
+namespace dbus_flashmq
+{
+
+AuthResult acl_check_helper(
+    void *thread_data, const AclAccess access, const std::string &clientid, const std::string &username,
+    const std::string &topic, const std::string &payload = "");
 
 class TesterGlobals
 {
@@ -19,5 +42,7 @@ public:
     void pollExternalFd(int fd, uint32_t events, const std::weak_ptr<void> &p);
     void pollExternalRemove(int fd);
 };
+
+}
 
 #endif // TESTERGLOBALS_H

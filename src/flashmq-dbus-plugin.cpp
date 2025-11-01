@@ -7,13 +7,17 @@
 #include <string.h>
 #include <thread>
 #include <fstream>
+#include <optional>
 
 #include "state.h"
 #include "utils.h"
 
 // https://dbus.freedesktop.org/doc/api/html/index.html
 
-extern "C"
+#define DBUS_MQTT_INTEGRATIONS_USERNAME "dbus-mqtt-integrations"
+
+using namespace dbus_flashmq;
+
 int flashmq_plugin_version()
 {
     return FLASHMQ_PLUGIN_VERSION;
@@ -90,21 +94,22 @@ void flashmq_plugin_deinit(void *thread_data, std::unordered_map<std::string, st
     state->write_bridge_connection_state(BRIDGE_RPC, std::optional<bool>(), BRIDGE_DEACTIVATED_STRING);
 }
 
-extern "C"
-AuthResult flashmq_plugin_login_check(void *thread_data, const std::string &clientid, const std::string &username, const std::string &password,
-                                      const std::vector<std::pair<std::string, std::string>> *userProperties, const std::weak_ptr<Client> &client)
+AuthResult auth_success_or_delayed_fail(const std::weak_ptr<Client> &client, const std::string &username, AuthResult result)
 {
-    State *state = static_cast<State*>(thread_data);
-
-    FlashMQSockAddr addr;
-    memset(&addr, 0, sizeof(FlashMQSockAddr));
-    flashmq_get_client_address(client, nullptr, &addr);
-
-    if (state->match_local_net(addr.getAddr()))
-    {
+    if (result == AuthResult::success)
         return AuthResult::success;
-    }
 
+    auto f = [client, result]() {
+        flashmq_continue_async_authentication(client, result, "", "");
+    };
+    const uint32_t delay = get_random<uint32_t>() % 5000 + 1000;
+    flashmq_add_task(f, delay);
+    flashmq_logf(LOG_NOTICE, "Sending delayed deny for login with '%s'", username.c_str());
+    return AuthResult::async;
+}
+
+AuthResult do_vnc_auth(const std::string &password)
+{
     const static std::string vnc_password_file_path = "/data/conf/vncpassword.txt";
 
     try
@@ -142,13 +147,158 @@ AuthResult flashmq_plugin_login_check(void *thread_data, const std::string &clie
     }
     catch (std::exception &ex)
     {
-        flashmq_logf(LOG_ERR, "Error in trying to read '%s': %s", vnc_password_file_path.c_str(), ex.what());
+        flashmq_logf(LOG_ERR, "Error in do_vnc_auth using '%s': %s", vnc_password_file_path.c_str(), ex.what());
     }
 
     return AuthResult::login_denied;
 }
 
-extern "C"
+/**
+ * These are tokens set for pairing, like:
+ *
+ *   curl --insecure --user "remoteconsole:securityprofilepassword" -X POST \
+ *     -d "role=evcharger&device_id=mydevice123" 'https://venus.local/auth/generate-token/'
+ *
+ * Answer: {"token_name":"token/evcharger/mydevice123","password":"hfNWPw7UmCKg4CiSZ1CKnnkjlBbArStO"}
+ *
+ * Example tokens file:
+ *
+ * [
+ *    {
+ *       "password_hash": "$2y$10$SIQlG707GEsg2J6ek.FH/Od9DEr8NeBC/1xdNmdz3So7ilwKbOUw6",
+ *       "token_name": "token/evcharger/mydevice123"
+ *    }
+ * ]
+ *
+ */
+std::optional<AuthResult> do_token_auth(const std::string &username, const std::string &password)
+{
+    try
+    {
+        const static std::string token_users_file = "/data/conf/tokens.json";
+
+        if (!std::filesystem::exists(token_users_file))
+            return {};
+
+        std::ifstream infile(token_users_file);
+
+        if (!infile.is_open())
+        {
+            throw std::runtime_error("Error opening " + token_users_file);
+        }
+
+        std::stringstream buffer;
+        buffer << infile.rdbuf();
+        std::string json_text = buffer.str();
+
+        const nlohmann::json j = nlohmann::json::parse(json_text);
+
+        if (!j.is_array())
+            throw std::runtime_error("The file '" + token_users_file + "' is not valid json (array)");
+
+        for (auto &row : j)
+        {
+            const std::string &token_name = row.at("token_name");
+            const std::string &password_hash = row.at("password_hash");
+
+            if (username == token_name)
+            {
+                const bool match = crypt_match(password, password_hash);
+                return match ? AuthResult::success : AuthResult::acl_denied;
+            }
+        }
+
+        return {};
+    }
+    catch (std::exception &ex)
+    {
+        flashmq_logf(LOG_ERR, "Error in do_token_auth: %s", ex.what());
+    }
+
+    return {};
+}
+
+AuthResult flashmq_plugin_login_check(
+    void *thread_data, const std::string &clientid, const std::string &username, const std::string &password,
+    const std::vector<std::pair<std::string, std::string>> *userProperties, const std::weak_ptr<Client> &client)
+{
+    if (!thread_data)
+        return AuthResult::error;
+
+    State *state = static_cast<State*>(thread_data);
+    const bool localhost_login = state->localhost_client(client);
+
+    /*
+     * The local_username of the bridge does not go through flashmq_plugin_login_check(), so seeing this username
+     * is always an imposter.
+     */
+    if (username_is_bridge(username))
+    {
+        return AuthResult::acl_denied;
+    }
+
+    if (username == DBUS_MQTT_INTEGRATIONS_USERNAME)
+    {
+        // We assume elsewhere that this user is localhost, so we must force it.
+        return localhost_login ? AuthResult::success : AuthResult::login_denied;
+    }
+
+    if (localhost_login)
+    {
+        // Localhost is / can be a connection that is authenticated by Nginx, meaning GUIv2.
+        state->privileged_network_clients.insert(client);
+
+        return AuthResult::success;
+    }
+
+    // Tokens are not subject to rate-limiting. We control their entropy, and rate-limiting is not necessary.
+    const std::optional<AuthResult> token_auth_result = do_token_auth(username, password);
+    if (token_auth_result)
+    {
+        return auth_success_or_delayed_fail(client, username, token_auth_result.value());
+    }
+
+    /*
+     * The normal security profile password has no specific username. So, we block any integration token that does
+     * not appear in our user database (the do_token_auth check above this).
+     *
+     * This also means that in 'unsecured' mode, tokens still require a password, even though the normal
+     * mqtt access doesn't.
+     */
+    if (username.rfind("token/", 0) == 0)
+    {
+        return auth_success_or_delayed_fail(client, username, AuthResult::login_denied);
+    }
+
+    if (state->loginTokensShortTerm <= 0 || state->loginTokensLongTerm <= 0)
+    {
+        flashmq_logf(LOG_WARNING, "Login rate-limited: short-term-left=%d long-term-left=%d", state->loginTokensShortTerm, state->loginTokensLongTerm);
+        return auth_success_or_delayed_fail(client, username, AuthResult::login_denied);
+    }
+
+    if (do_vnc_auth(password) == AuthResult::success)
+    {
+        // The VNC password is the security profile password, so it's privileged.
+        state->privileged_network_clients.insert(client);
+
+        return AuthResult::success;
+    }
+
+    /*
+     * We only count unseen attempts. When some integration uses a wrong/changed password and keeps trying, we
+     * should not trip the rate limiter.
+     */
+    if (state->passwordHistory.count(password) == 0)
+    {
+        state->decrement_login_tokens();
+
+        if (state->passwordHistory.size() < LOGIN_TOKENS_LONG_TERM) // protect memory use
+            state->passwordHistory.insert(password);
+    }
+
+    return auth_success_or_delayed_fail(client, username, AuthResult::login_denied);
+}
+
 bool flashmq_plugin_alter_publish(void *thread_data, const std::string &clientid, std::string &topic, const std::vector<std::string> &subtopics,
                                   std::string_view payload, uint8_t &qos, bool &retain, const std::optional<std::string> &correlationData,
                                   const std::optional<std::string> &responseTopic, std::vector<std::pair<std::string, std::string>> *userProperties)
@@ -179,16 +329,171 @@ bool flashmq_plugin_alter_publish(void *thread_data, const std::string &clientid
     return false;
 }
 
+void handle_venus_actions(
+    State *state, const std::string &action, const std::string &system_id, const std::string &username,
+    const std::string &topic, const std::vector<std::string> &subtopics, std::string_view payload)
+{
+    // Wo only work on strings like R/<portalid>/system/0/Serial.
+    if (action == "W" || action == "R")
+    {
+        /*
+         * Because we also need to respond to reads and writes from remote clients when the system is not alive, we need
+         * to consider any AclAccess::write activity as interest.
+         */
+        if (username_is_bridge(username))
+            state->vrmBridgeInterestTime = std::chrono::steady_clock::now();
+
+        // There's also 'P' for mqtt-rpc, but we should ignore that, and not report it.
+        if (action == "W")
+        {
+            std::string payload_str(payload);
+            state->write_to_dbus(topic, payload_str);
+        }
+        else if (action == "R")
+        {
+            std::string payload_str(payload);
+            const std::string path = splitToVector(topic, '/', 2).at(2);
+            if (path == "system/0/Serial" || path == "keepalive")
+            {
+                state->handle_keepalive(payload_str);
+            }
+
+            if (path != "keepalive")
+            {
+                state->handle_read(topic);
+            }
+        }
+    }
+    else if (action == "$SYS" && subtopics.size() >= 5)
+    {
+        /*
+         * Deal with bridge notifications like:
+         *
+         * * $SYS/broker/bridge/GXdbus/connected
+         * * $SYS/broker/bridge/GXdbus/connection_status
+         *
+         * Disconnection is a good time to re-register ourselves on VRM, because there is a small chance our
+         * registration has been reset by the user at some point in the past, which would only be seen when
+         * making a new connection.
+         */
+
+        const std::string &bridgeName = subtopics.at(3);
+        const std::string &which = subtopics.at(4);
+        const std::string payload_str(payload);
+
+        if (bridgeName == BRIDGE_DBUS || bridgeName == BRIDGE_RPC)
+        {
+            if (which == "connected")
+            {
+                bool &connected = state->bridges_connected[bridgeName];
+                const bool connected_now = payload_str == "1";
+
+                if (connected_now)
+                {
+                    connected = true;
+                }
+                else if (connected && !connected_now && state->register_pending_id == 0)
+                {
+                    connected = false;
+
+                    /*
+                     * Note that for the majority of users, this re-registration is not needed and it will just reconnect. We need to do it
+                     * just in case (for installations that may have had their tokens reset), and we can allow some random wait time
+                     * to prevent DDOS on the registration server.
+                     */
+                    const uint32_t delay = get_random<uint32_t>() % 600000;
+
+                    flashmq_logf(LOG_NOTICE, "Bridge '%s' disconnect detected. We will initiate a re-registration in %d ms.", bridgeName.c_str(), delay);
+
+                    state->initiate_broker_registration(delay);
+                }
+
+                state->bridge_connection_states[bridgeName].connected = connected_now;
+            }
+            else if (which == "connection_status")
+            {
+                state->bridge_connection_states[bridgeName].msg = payload_str;
+            }
+
+            state->write_all_bridge_connection_states_debounced();
+        }
+    }
+}
+
+/**
+ * Handles authorization checks for MQTT-integrated devices. As dbus-flashmq, we don't actually do anything with it. We only
+ * authorize.
+ *
+ * The authorization is implicit based on topic names and the username (which was approved on login). So, no permission
+ * databases need to be checked.
+ *
+ * Examples of pairing:
+ * - I/local/in/evcharger/HQ2401ABCDE/vregset
+ * - I/local/out/evcharger/HQ2401ABCDE/vregset
+ * - I/local/in/evcharger/HQ2401ABCDE/vregnotify
+ *
+ * Username example from the connecting client: token/evcharger/HQ2501ABCDE
+ */
+AuthResult handle_paired_integration_client_auth(
+    State *state, const AclAccess access, const std::string &clientid, const std::string &username,
+    const std::string &topic, const std::vector<std::string> &subtopics)
+{
+    if (access == AclAccess::subscribe)
+        return AuthResult::success;
+
+    if (subtopics.size() < 5)
+        return AuthResult::acl_denied;
+
+    const std::string &direction = subtopics.at(2);
+
+    if (username == DBUS_MQTT_INTEGRATIONS_USERNAME)
+    {
+        if ((access == AclAccess::write && direction == "out") || (access == AclAccess::read && direction == "in" ))
+            return AuthResult::success;
+
+        return AuthResult::acl_denied;
+    }
+
+    if (access == AclAccess::write && direction == "out")
+        return AuthResult::acl_denied;
+
+    if (access == AclAccess::read && direction == "in")
+        return AuthResult::acl_denied;
+
+    if (username.rfind("token/", 0) != 0)
+        return AuthResult::acl_denied;
+
+    const std::vector<std::string> user_fields = splitToVector(username, '/');
+
+    if (user_fields.size() != 3)
+        return AuthResult::acl_denied;
+
+    const std::string &unique_id_from_user = user_fields.at(2);
+    const std::string &unique_id_from_topic = subtopics.at(4);
+    const std::string &role_from_user = user_fields.at(1);
+    const std::string &role_from_topic = subtopics.at(3);
+
+    if (unique_id_from_user.empty() || unique_id_from_topic.empty())
+        return AuthResult::acl_denied;
+
+    if (unique_id_from_user == unique_id_from_topic && role_from_user == role_from_topic)
+        return AuthResult::success;
+
+    return AuthResult::acl_denied;
+}
+
 /**
  * @brief using ACL hook as 'on_message' handler.
  */
-extern "C"
 AuthResult flashmq_plugin_acl_check(void *thread_data, const AclAccess access, const std::string &clientid, const std::string &username,
-                                    const std::string &topic, const std::vector<std::string> &subtopics, std::string_view payload,
-                                    const uint8_t qos, const bool retain, const std::optional<std::string> &correlationData,
-                                    const std::optional<std::string> &responseTopic,
+                                    const std::string &topic, const std::vector<std::string> &subtopics, const std::string &shareName,
+                                    std::string_view payload, const uint8_t qos, const bool retain,
+                                    const std::optional<std::string> &correlationData, const std::optional<std::string> &responseTopic,
                                     const std::vector<std::pair<std::string, std::string>> *userProperties)
 {
+    if (access == AclAccess::subscribe || access == AclAccess::register_will)
+        return AuthResult::success;
+
     try
     {
         State *state = static_cast<State*>(thread_data);
@@ -199,15 +504,91 @@ AuthResult flashmq_plugin_acl_check(void *thread_data, const AclAccess access, c
         const std::string &action = subtopics.at(0);
         const std::string &system_id = subtopics.at(1);
 
-        if (access == AclAccess::write)
+        /*
+         * Can be like:
+         *
+         * - I/local/in/evcharger/HQ2401ABCDE/vregset
+         * - I/<portalid>/in/ev/<vin>/heartbeat (which is only done over VRM, not LAN).
+         *
+         * We block integration access to users logged in using the normal security profile password on LAN. This is
+         * to avoid integrators using that password mistakenly.
+         *
+         * Allowing localhost still allows diagnostic use with a local client.
+         *
+         * Obtaining whether a client is localhost takes a bit of work, so we only do it conditionally, even though
+         * to the eye, it may make more sense to do it earlier.
+         */
+        if (action == "I")
         {
             /*
-             * We also block P/<portalid>/in for safety, but that should already be covered by not having
-             * a bridge connection for RPC.
+             * This block will always return an answer. Unlike the rest of I; see below.
              */
-            if (action == "W" || (action == "P" && subtopics.size() >= 3 && subtopics.at(2) == "in"))
+            if (system_id == "local")
             {
-                if (client_id_is_bridge(clientid) && state->vrm_portal_mode != VrmPortalMode::Full)
+                AuthResult preliminary_result = handle_paired_integration_client_auth(state, access, clientid, username, topic, subtopics);
+
+                if (preliminary_result == AuthResult::acl_denied)
+                {
+                    const IsPrivilegedUser priv = state->is_privileged_user(clientid, username);
+
+                    if (state->localhost_client(priv.client))
+                    {
+                        preliminary_result = AuthResult::success;
+                    }
+                }
+
+                return preliminary_result;
+            }
+
+            /*
+             * This block only has the chance to deny, not allow. The reason is that the rest of this function will
+             * perform the proper checks, like VRM read-only mode, or receiving messages for another portal ID.
+             */
+            if (!(username == DBUS_MQTT_INTEGRATIONS_USERNAME || username_is_bridge(username)))
+            {
+                const IsPrivilegedUser priv = state->is_privileged_user(clientid, username);
+
+                if (!state->localhost_client(priv.get_client()))
+                {
+                    return AuthResult::acl_denied;
+                }
+            }
+        }
+
+        if (access == AclAccess::write)
+        {
+            if (action == "W" && subtopics.size() >= 3 && subtopics.at(2) == "platform" && topic.find("/Security/Api") != std::string::npos)
+            {
+                if (!state->is_privileged_user(clientid, username))
+                {
+                    flashmq_logf(LOG_WARNING, "Attempt to invoke platform security API by non-privileged user.");
+                    return AuthResult::acl_denied;
+                }
+            }
+
+            if ((action == "W" || action == "R" || action == "P" || action == "I") && system_id != state->unique_vrm_id)
+            {
+                flashmq_logf(LOG_ERR, "We received a '%s' request for '%s', but that's not us (but %s)",
+                             action.c_str(), system_id.c_str(), state->unique_vrm_id.c_str());
+
+                /*
+                 * With W and R we are normally the one acting on that, so we can still relay them to any
+                 * subscribers. But for P and I, we are ensuring nobody gets those to avoid other Venus services
+                 * mistakingly acting on them.
+                 */
+                if (action == "W" || action == "R")
+                    return AuthResult::success;
+                else
+                    return AuthResult::acl_denied;
+            }
+
+            /*
+             * We also block P/<portalid>/in for safety; that is currently also covered by not having an RPC bridge
+             * connection in read-only mode, but that may not be a separate connection in the future anymore.
+             */
+            if (action == "W" || ((action == "P" || action == "I") && subtopics.size() >= 3 && subtopics.at(2) == "in"))
+            {
+                if (username_is_bridge(username) && state->vrm_portal_mode != VrmPortalMode::Full)
                     return AuthResult::acl_denied;
             }
 
@@ -229,106 +610,43 @@ AuthResult flashmq_plugin_acl_check(void *thread_data, const AclAccess access, c
                 return AuthResult::acl_denied;
             }
 
-            // Wo only work on strings like R/<portalid>/system/0/Serial.
-            if (action == "W" || action == "R")
-            {
-                if (system_id != state->unique_vrm_id)
-                {
-                    flashmq_logf(LOG_ERR, "We received a request for '%s', but that's not us (%s)", system_id.c_str(), state->unique_vrm_id.c_str());
-                    return AuthResult::success;
-                }
-
-                /*
-                 * Because we also need to respond to reads and writes from remote clients when the system is not alive, we need
-                 * to consider any AclAccess::write activity as interest.
-                 */
-                if (client_id_is_bridge(clientid))
-                    state->vrmBridgeInterestTime = std::chrono::steady_clock::now();
-
-                // There's also 'P' for mqtt-rpc, but we should ignore that, and not report it.
-                if (action == "W")
-                {
-                    std::string payload_str(payload);
-                    state->write_to_dbus(topic, payload_str);
-                }
-                else if (action == "R")
-                {
-                    std::string payload_str(payload);
-                    const std::string path = splitToVector(topic, '/', 2).at(2);
-                    if (path == "system/0/Serial" || path == "keepalive")
-                    {
-                        state->handle_keepalive(payload_str);
-                    }
-
-                    if (path != "keepalive")
-                    {
-                        state->handle_read(topic);
-                    }
-                }
-            }
-            else if (action == "$SYS" && subtopics.size() >= 5)
-            {
-                /*
-                 * Deal with bridge notifications like:
-                 *
-                 * * $SYS/broker/bridge/GXdbus/connected
-                 * * $SYS/broker/bridge/GXdbus/connection_status
-                 *
-                 * Disconnection is a good time to re-register ourselves on VRM, because there is a small chance our
-                 * registration has been reset by the user at some point in the past, which would only be seen when
-                 * making a new connection.
-                 */
-
-                const std::string &bridgeName = subtopics.at(3);
-                const std::string &which = subtopics.at(4);
-                const std::string payload_str(payload);
-
-                if (bridgeName == BRIDGE_DBUS || bridgeName == BRIDGE_RPC)
-                {
-                    if (which == "connected")
-                    {
-                        bool &connected = state->bridges_connected[bridgeName];
-                        const bool connected_now = payload_str == "1";
-
-                        if (connected_now)
-                        {
-                            connected = true;
-                        }
-                        else if (connected && !connected_now && state->register_pending_id == 0)
-                        {
-                            connected = false;
-
-                            /*
-                             * Note that for the majority of users, this re-registration is not needed and it will just reconnect. We need to do it
-                             * just in case (for installations that may have had their tokens reset), and we can allow some random wait time
-                             * to prevent DDOS on the registration server.
-                             */
-                            const uint32_t delay = get_random<uint32_t>() % 600000;
-
-                            flashmq_logf(LOG_NOTICE, "Bridge '%s' disconnect detected. We will initiate a re-registration in %d ms.", bridgeName.c_str(), delay);
-
-                            state->initiate_broker_registration(delay);
-                        }
-
-                        state->bridge_connection_states[bridgeName].connected = connected_now;
-                    }
-                    else if (which == "connection_status")
-                    {
-                        state->bridge_connection_states[bridgeName].msg = payload_str;
-                    }
-
-                    state->write_all_bridge_connection_states_debounced();
-                }
-            }
+            // The rest is not auth as such, but take actions based on the messages.
+            handle_venus_actions(state, action, system_id, username, topic, subtopics, payload);
         }
         else if (access == AclAccess::read)
         {
-            // We only limit our own N (notifications), to avoid accidentally denying other things.
-            if (action != "N")
+            const char action_char = action.length() == 1 ? action[0] : 0;
+
+            /*
+             * Just means other MQTT clients can't see it. Doesn't affect ourselves or dbus communications.
+             *
+             * Denying all W reads is not really possible anymore. Our own apps don't use those, but custom
+             * integrations might.
+             */
+            if (action_char == 'W')
+            {
+                if (subtopics.size() >= 3 && subtopics.at(2) == "platform" && topic.find("/Security/Api") != std::string::npos)
+                    return AuthResult::acl_denied;
+
+                if (subtopics.size() >= 7 && subtopics.at(2) == "settings" && subtopics.at(6) == "AccessPointPassword")
+                    return AuthResult::acl_denied;
+
+                std::string lower_topic = topic;
+                str_make_lower(lower_topic);
+
+                if (lower_topic.find("password") != std::string::npos)
+                    return AuthResult::acl_denied;
+            }
+
+            /*
+             * The if-statements below stop traffic over the bridge if there is no VRM interest. However, we only
+             * limit our own N (notifications), to avoid accidentally denying other things.
+             */
+            if (action_char != 'N')
                 return AuthResult::success;
 
             // We still allow normal cross-client behavior when it's all on LAN.
-            if (!client_id_is_bridge(clientid))
+            if (!username_is_bridge(username))
                 return AuthResult::success;
 
             if (std::chrono::steady_clock::now() > state->vrmBridgeInterestTime + std::chrono::seconds(VRM_INTEREST_TIMEOUT_SECONDS))
@@ -414,3 +732,20 @@ void flashmq_plugin_poll_event_received(void *thread_data, int fd, uint32_t even
         }
     }
 }
+
+void flashmq_plugin_periodic_event(void *thread_data)
+{
+    if (!thread_data)
+        return;
+
+    State *state = static_cast<State*>(thread_data);
+
+    state->clear_expired_privileged_clients();
+}
+
+
+
+
+
+
+

@@ -11,12 +11,21 @@
 #include "types.h"
 #include <thread>
 #include <optional>
+#include <unordered_set>
+#include <set>
 #include "serviceidentifier.h"
 #include "network.h"
+
+#include "vendor/flashmq_plugin.h"
 
 #define VRM_INTEREST_TIMEOUT_SECONDS 130
 #define KEEPALIVE_TOKENS 3
 #define ONE_SECOND_TIMER_INTERVAL 1000
+#define LOGIN_TOKENS_SHORT_TERM 20
+#define LOGIN_TOKENS_LONG_TERM 150
+
+namespace dbus_flashmq
+{
 
 /**
  * @brief The Watch class is not an owner of the watches. DBus itself is.
@@ -66,6 +75,19 @@ struct BridgeConnectionState
     bool operator==(const BridgeConnectionState &other) const;
 };
 
+struct IsPrivilegedUser
+{
+    bool privileged = false;
+    std::weak_ptr<Client> client;
+
+    operator bool() const
+    {
+        return privileged;
+    }
+
+    const std::weak_ptr<Client> &get_client() const;
+};
+
 struct State
 {
     uint32_t register_pending_id = 0;
@@ -73,6 +95,8 @@ struct State
     std::unordered_map<std::string, BridgeConnectionState> bridge_connection_states;
     std::unordered_map<std::string, BridgeConnectionState> bridge_connection_states_last_written;
     bool do_online_registration = true;
+
+    std::set<std::weak_ptr<Client>, std::owner_less<std::weak_ptr<Client>>> privileged_network_clients;
 
     static std::atomic_int instance_counter;
     std::string unique_vrm_id;
@@ -103,6 +127,11 @@ struct State
     std::chrono::time_point<std::chrono::steady_clock> vrmBridgeInterestTime;
     int keepAliveTokens = KEEPALIVE_TOKENS;
     bool warningAboutNTopicsLogged = false;
+
+    std::unordered_set<std::string> passwordHistory;
+    int loginTokensShortTerm = LOGIN_TOKENS_SHORT_TERM;
+    int loginTokensLongTerm = LOGIN_TOKENS_LONG_TERM;
+    std::chrono::time_point<std::chrono::steady_clock> longTermLoginTokensResetAt;
 
     std::vector<Network> local_nets;
 
@@ -139,6 +168,12 @@ struct State
     bool match_local_net(const struct sockaddr *addr) const;
     void write_bridge_connection_state(const std::string &bridge, const std::optional<bool> connected, const std::string &msg);
     void write_all_bridge_connection_states_debounced();
+    void decrement_login_tokens();
+    void clear_expired_privileged_clients();
+    bool localhost_client(const std::weak_ptr<Client> &client) const;
+    IsPrivilegedUser is_privileged_user(const std::string &clientid, const std::string &username) const;
 };
+
+}
 
 #endif // STATE_H

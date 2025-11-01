@@ -13,6 +13,9 @@
 #define BRIDGE_RPC "GXrpc"
 #define BRIDGE_DEACTIVATED_STRING "deactivated"
 
+namespace dbus_flashmq
+{
+
 enum class VrmPortalMode
 {
     Unknown,
@@ -61,8 +64,11 @@ public:
     const std::string &get_path() const;
     const std::string &get_service_name() const;
     bool should_be_retained() const;
+    bool is_ap_password() const;
     bool is_pincode() const;
     bool is_vrm_portal_mode() const;
 };
+
+}
 
 #endif // TYPES_H

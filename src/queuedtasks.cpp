@@ -3,6 +3,8 @@
 
 #include "queuedtasks.h"
 
+using namespace dbus_flashmq;
+
 bool QueuedTask::operator<(const QueuedTask &rhs) const
 {
     return this->when < rhs.when;

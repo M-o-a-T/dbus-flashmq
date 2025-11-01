@@ -1,3 +1,9 @@
+dbus-flashmq (15.1) stable; urgency=medium
+
+  * Upstream merge.
+
+ -- Matthias Urlichs <matthias@urlichs.de>  Sat, 01 Nov 2025 13:33:30 +0100
+
 dbus-flashmq (12.2) unstable; urgency=medium
 
   * Depend on flashmq-dev >= 1.20.
