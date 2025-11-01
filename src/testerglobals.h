@@ -4,7 +4,8 @@
 #include <unordered_map>
 #include <memory>
 #include "queuedtasks.h"
-#include "vendor/flashmq_plugin.h"
+
+#include <flashmq_plugin.h>
 
 extern int testCount;
 extern int failCount;

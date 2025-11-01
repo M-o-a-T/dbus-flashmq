@@ -16,7 +16,7 @@
 #include "serviceidentifier.h"
 #include "network.h"
 
-#include "vendor/flashmq_plugin.h"
+#include <flashmq_plugin.h>
 
 #define VRM_INTEREST_TIMEOUT_SECONDS 130
 #define KEEPALIVE_TOKENS 3
