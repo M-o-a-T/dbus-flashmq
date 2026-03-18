@@ -21,6 +21,7 @@
 #define VRM_INTEREST_TIMEOUT_SECONDS 130
 #define KEEPALIVE_TOKENS 3
 #define ONE_SECOND_TIMER_INTERVAL 1000
+#define ONE_MINUTE_TIMER_INTERVAL 60000
 #define LOGIN_TOKENS_SHORT_TERM 20
 #define LOGIN_TOKENS_LONG_TERM 150
 
@@ -84,8 +85,6 @@ struct IsPrivilegedUser
     {
         return privileged;
     }
-
-    const std::weak_ptr<Client> &get_client() const;
 };
 
 struct State
@@ -94,6 +93,7 @@ struct State
     std::map<std::string, bool> bridges_connected;
     std::unordered_map<std::string, BridgeConnectionState> bridge_connection_states;
     std::unordered_map<std::string, BridgeConnectionState> bridge_connection_states_last_written;
+    std::unordered_map<std::string, std::unordered_set<std::string>> users_to_clientids;
     bool do_online_registration = true;
 
     std::set<std::weak_ptr<Client>, std::owner_less<std::weak_ptr<Client>>> privileged_network_clients;
@@ -113,6 +113,7 @@ struct State
     uint32_t keep_alive_reset_task_id = 0;
     uint32_t heartbeat_task_id = 0;
     uint32_t period_task_id = 0;
+    uint32_t slow_timer_task_id = 0;
     uint32_t write_all_bridge_states_task_id = 0;
 
     int dispatch_event_fd = -1;
@@ -159,12 +160,14 @@ struct State
     void heartbeat();
     void publish_all(const std::optional<std::string> &payload_echo);
     void set_new_id_to_owner(const std::string &owner, const std::string &name);
-    std::string get_named_owner(std::string sender) const;
+    void get_named_owner(std::string &sender) const;
     void remove_id_to_owner(const std::string &owner);
     void handle_read(const std::string &topic);
     void initiate_broker_registration(uint32_t delay);
     void per_second_action();
     void start_one_second_timer();
+    void per_minute_action();
+    void start_one_minute_timer();
     bool match_local_net(const struct sockaddr *addr) const;
     void write_bridge_connection_state(const std::string &bridge, const std::optional<bool> connected, const std::string &msg);
     void write_all_bridge_connection_states_debounced();
@@ -172,6 +175,9 @@ struct State
     void clear_expired_privileged_clients();
     bool localhost_client(const std::weak_ptr<Client> &client) const;
     IsPrivilegedUser is_privileged_user(const std::string &clientid, const std::string &username) const;
+    void register_user_and_clientid(const std::string &username, const std::string &clientid);
+    void disconnect_all_connections_of_user(const std::string &username);
+    void purge_old_usernames_to_clientids();
 };
 
 }

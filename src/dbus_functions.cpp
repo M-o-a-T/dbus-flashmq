@@ -208,7 +208,7 @@ DBusHandlerResult dbus_flashmq::dbus_handle_message(DBusConnection *connection, 
         {
             state->attempt_to_process_delayed_changes();
 
-            if (signal_name == "NameAcquired")
+            if (strcmp(signal_name.c_str(), "NameAcquired") == 0)
             {
                 const char *_name = nullptr;
                 DBusErrorGuard err;
@@ -220,7 +220,7 @@ DBusHandlerResult dbus_flashmq::dbus_handle_message(DBusConnection *connection, 
                 flashmq_logf(LOG_DEBUG, "Signal: '%s' by '%s'. Name: '%s'", signal_name.c_str(), sender.c_str(), name.c_str());
                 return DBusHandlerResult::DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
             }
-            else if (signal_name == "NameOwnerChanged")
+            else if (strcmp(signal_name.c_str(), "NameOwnerChanged") == 0)
             {
                 const char *_name = nullptr;
                 const char *_oldowner = nullptr;
@@ -234,7 +234,7 @@ DBusHandlerResult dbus_flashmq::dbus_handle_message(DBusConnection *connection, 
                 std::string oldowner(_oldowner);
                 std::string newowner(_newowner);
 
-                if (name.find("com.victronenergy.") == std::string::npos)
+                if (!name.starts_with("com.victronenergy."))
                     return DBusHandlerResult::DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 
                 if (!newowner.empty())
@@ -253,13 +253,13 @@ DBusHandlerResult dbus_flashmq::dbus_handle_message(DBusConnection *connection, 
                 return DBusHandlerResult::DBUS_HANDLER_RESULT_HANDLED;
             }
 
-            sender = state->get_named_owner(sender);
+            state->get_named_owner(sender);
             //flashmq_logf(LOG_DEBUG, "Received signal: '%s' by '%s'", signal_name.c_str(), sender.c_str());
 
-            if (sender.find("com.victronenergy") != std::string::npos)
+            if (sender.starts_with("com.victronenergy."))
             {
                 // The preferred signal, containing multiple items. The format is used by both ItemsChanged and the method call GetItems.
-                if (signal_name == "ItemsChanged")
+                if (strcmp(signal_name.c_str(), "ItemsChanged") == 0)
                 {
                     std::unordered_map<std::string, Item> changed_items = get_from_dict_with_dict_with_text_and_value(message);
                     state->add_dbus_to_mqtt_mapping(sender, changed_items, true);
@@ -268,13 +268,23 @@ DBusHandlerResult dbus_flashmq::dbus_handle_message(DBusConnection *connection, 
                 }
 
                 // Will contain the update for only one item.
-                if (signal_name == "PropertiesChanged")
+                if (strcmp(signal_name.c_str(), "PropertiesChanged") == 0)
                 {
                     std::unordered_map<std::string, Item> changed_items = get_from_properties_changed(message);
                     state->add_dbus_to_mqtt_mapping(sender, changed_items, true);
 
                     return DBusHandlerResult::DBUS_HANDLER_RESULT_HANDLED;
                 }
+            }
+
+            const char *_interface = dbus_message_get_interface(message);
+            const std::string interface(_interface ? _interface : "");
+
+            if (strcmp(interface.c_str(), "com.victronenergy.TokenUsers") == 0 && strcmp(signal_name.c_str(), "UserRemoved") == 0)
+            {
+                std::string token_name = get_string_from_reply(message);
+                state->disconnect_all_connections_of_user(token_name);
+                return DBusHandlerResult::DBUS_HANDLER_RESULT_HANDLED;
             }
 
             flashmq_logf(LOG_INFO, "Unhandled signal: '%s' by '%s'", signal_name.c_str(), sender.c_str());

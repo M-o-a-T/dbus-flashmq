@@ -11,6 +11,7 @@
 
 #include "state.h"
 #include "utils.h"
+#include "version.h"
 
 // https://dbus.freedesktop.org/doc/api/html/index.html
 
@@ -40,6 +41,7 @@ void flashmq_plugin_deallocate_thread_memory(void *thread_data, std::unordered_m
 extern "C"
 void flashmq_plugin_main_init(std::unordered_map<std::string, std::string> &plugin_opts)
 {
+    flashmq_logf(LOG_NOTICE, "Starting dbus-flashmq version %s", std::to_string(version).c_str());
     dbus_threads_init_default();
 }
 
@@ -71,6 +73,7 @@ void flashmq_plugin_init(void *thread_data, std::unordered_map<std::string, std:
     flashmq_publish_message(keepalive_topic.str(), 0, false, "1");
 
     state->start_one_second_timer();
+    state->start_one_minute_timer();
 }
 
 extern "C"
@@ -94,10 +97,15 @@ void flashmq_plugin_deinit(void *thread_data, std::unordered_map<std::string, st
     state->write_bridge_connection_state(BRIDGE_RPC, std::optional<bool>(), BRIDGE_DEACTIVATED_STRING);
 }
 
-AuthResult auth_success_or_delayed_fail(const std::weak_ptr<Client> &client, const std::string &username, AuthResult result)
+AuthResult auth_success_or_delayed_fail(
+        State *state, const std::weak_ptr<Client> &client,
+        const std::string &username, const std::string &clientid, AuthResult result)
 {
     if (result == AuthResult::success)
+    {
+        state->register_user_and_clientid(username, clientid);
         return AuthResult::success;
+    }
 
     auto f = [client, result]() {
         flashmq_continue_async_authentication(client, result, "", "");
@@ -240,7 +248,8 @@ AuthResult flashmq_plugin_login_check(
     if (username == DBUS_MQTT_INTEGRATIONS_USERNAME)
     {
         // We assume elsewhere that this user is localhost, so we must force it.
-        return localhost_login ? AuthResult::success : AuthResult::login_denied;
+        AuthResult r = localhost_login ? AuthResult::success : AuthResult::login_denied;
+        return auth_success_or_delayed_fail(state, client, username, clientid, r);
     }
 
     if (localhost_login)
@@ -248,14 +257,14 @@ AuthResult flashmq_plugin_login_check(
         // Localhost is / can be a connection that is authenticated by Nginx, meaning GUIv2.
         state->privileged_network_clients.insert(client);
 
-        return AuthResult::success;
+        return auth_success_or_delayed_fail(state, client, username, clientid, AuthResult::success);
     }
 
     // Tokens are not subject to rate-limiting. We control their entropy, and rate-limiting is not necessary.
     const std::optional<AuthResult> token_auth_result = do_token_auth(username, password);
     if (token_auth_result)
     {
-        return auth_success_or_delayed_fail(client, username, token_auth_result.value());
+        return auth_success_or_delayed_fail(state, client, username, clientid, token_auth_result.value());
     }
 
     /*
@@ -267,13 +276,13 @@ AuthResult flashmq_plugin_login_check(
      */
     if (username.rfind("token/", 0) == 0)
     {
-        return auth_success_or_delayed_fail(client, username, AuthResult::login_denied);
+        return auth_success_or_delayed_fail(state, client, username, clientid, AuthResult::login_denied);
     }
 
     if (state->loginTokensShortTerm <= 0 || state->loginTokensLongTerm <= 0)
     {
         flashmq_logf(LOG_WARNING, "Login rate-limited: short-term-left=%d long-term-left=%d", state->loginTokensShortTerm, state->loginTokensLongTerm);
-        return auth_success_or_delayed_fail(client, username, AuthResult::login_denied);
+        return auth_success_or_delayed_fail(state, client, username, clientid, AuthResult::login_denied);
     }
 
     if (do_vnc_auth(password) == AuthResult::success)
@@ -281,7 +290,7 @@ AuthResult flashmq_plugin_login_check(
         // The VNC password is the security profile password, so it's privileged.
         state->privileged_network_clients.insert(client);
 
-        return AuthResult::success;
+        return auth_success_or_delayed_fail(state, client, username, clientid, AuthResult::success);
     }
 
     /*
@@ -296,7 +305,7 @@ AuthResult flashmq_plugin_login_check(
             state->passwordHistory.insert(password);
     }
 
-    return auth_success_or_delayed_fail(client, username, AuthResult::login_denied);
+    return auth_success_or_delayed_fail(state, client, username, clientid, AuthResult::login_denied);
 }
 
 bool flashmq_plugin_alter_publish(void *thread_data, const std::string &clientid, std::string &topic, const std::vector<std::string> &subtopics,
@@ -548,7 +557,7 @@ AuthResult flashmq_plugin_acl_check(void *thread_data, const AclAccess access, c
             {
                 const IsPrivilegedUser priv = state->is_privileged_user(clientid, username);
 
-                if (!state->localhost_client(priv.get_client()))
+                if (!state->localhost_client(priv.client))
                 {
                     return AuthResult::acl_denied;
                 }

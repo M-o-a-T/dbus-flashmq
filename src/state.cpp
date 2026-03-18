@@ -256,6 +256,7 @@ void State::open()
     dbus_connection_add_filter(con, dbus_handle_message, this, nullptr);
 
     dbus_bus_add_match(con, "type='signal',interface='com.victronenergy.BusItem'", nullptr);
+    dbus_bus_add_match(con, "type='signal',interface='com.victronenergy.TokenUsers'", nullptr);
     dbus_bus_add_match(con, "type='signal',interface='org.freedesktop.DBus',member='NameOwnerChanged'", nullptr);
 
     this->setDispatchable();
@@ -504,16 +505,14 @@ void State::set_new_id_to_owner(const std::string &owner, const std::string &nam
  * @param sender Like 1:31
  * @return
  */
-std::string State::get_named_owner(std::string sender) const
+void State::get_named_owner(std::string &sender) const
 {
-    if (sender.find("com.victronenergy") == std::string::npos)
+    if (!sender.starts_with("com.victronenergy"))
     {
         auto pos = service_id_to_names.find(sender);
         if (pos != service_id_to_names.end())
             sender = pos->second;
     }
-
-    return sender;
 }
 
 /**
@@ -642,6 +641,23 @@ void State::start_one_second_timer()
     this->period_task_id = flashmq_add_task(f, ONE_SECOND_TIMER_INTERVAL);
 }
 
+void State::per_minute_action()
+{
+    this->slow_timer_task_id = 0;
+    start_one_minute_timer();
+
+    purge_old_usernames_to_clientids();
+}
+
+void State::start_one_minute_timer()
+{
+    if (slow_timer_task_id)
+        return;
+
+    auto f = std::bind(&State::per_minute_action, this);
+    this->slow_timer_task_id = flashmq_add_task(f, ONE_MINUTE_TIMER_INTERVAL);
+}
+
 bool State::match_local_net(const sockaddr *addr) const
 {
     return std::any_of(local_nets.begin(), local_nets.end(), [addr](const Network &net){ return net.match(addr);});
@@ -766,7 +782,7 @@ void State::scan_all_dbus_services()
 
         for(const std::string &service : services)
         {
-            if (service.find("com.victronenergy") == std::string::npos)
+            if (!service.starts_with("com.victronenergy"))
                 continue;
 
             state->scan_dbus_service(service);
@@ -1038,7 +1054,69 @@ IsPrivilegedUser State::is_privileged_user(const std::string &clientid, const st
     return result;
 }
 
-const std::weak_ptr<Client> &IsPrivilegedUser::get_client() const
+void State::register_user_and_clientid(const std::string &username, const std::string &clientid)
 {
-    return this->client;
+    if (username.empty() || clientid.empty())
+        return;
+
+    std::unordered_set<std::string> &client_ids = this->users_to_clientids[username];
+    client_ids.insert(clientid);
+}
+
+void State::disconnect_all_connections_of_user(const std::string &username)
+{
+    flashmq_logf(LOG_NOTICE, "Removing all sessions of '%s'", username.c_str());
+
+    auto pos = this->users_to_clientids.find(username);
+    if (pos == this->users_to_clientids.end())
+        return;
+
+    for (const std::string &client_id : pos->second)
+    {
+        std::weak_ptr<Session> session;
+        flashmq_get_session_pointer(client_id, pos->first, session);
+        flashmq_plugin_remove_client_v4(session, true, ServerDisconnectReasons::NotAuthorized);
+    }
+
+    this->users_to_clientids.erase(pos);
+}
+
+void State::purge_old_usernames_to_clientids()
+{
+    flashmq_logf(LOG_DEBUG, "purging_old_usernames_to_clientids");
+
+    size_t user_count = 0;
+    size_t client_id_count = 0;
+
+    for (auto u2c_pos = this->users_to_clientids.begin(); u2c_pos != this->users_to_clientids.end(); )
+    {
+        const auto u2c_cur = u2c_pos++;
+
+        const std::string &username = u2c_cur->first;
+        std::unordered_set<std::string> &set = u2c_cur->second;
+
+        for (auto clientid_pos = set.begin(); clientid_pos != set.end();)
+        {
+            const auto clientid_cur = clientid_pos++;
+
+            std::weak_ptr<Session> session;
+            flashmq_get_session_pointer(*clientid_cur, username, session);
+
+            if (session.expired())
+            {
+                set.erase(clientid_cur);
+                client_id_count++;
+            }
+        }
+
+        if (set.empty())
+        {
+            this->users_to_clientids.erase(u2c_cur);
+            user_count++;
+        }
+    }
+
+    flashmq_logf(LOG_DEBUG,
+                "purging_old_usernames_to_clientids done: %s users with a total of %s client IDs",
+                 std::to_string(user_count).c_str(), std::to_string(client_id_count).c_str());
 }
