@@ -1,3 +1,10 @@
+dbus-flashmq (21.1) unstable; urgency=medium
+
+  * Upstream merge.
+  * Merge upstream/setvalue-replies.
+
+ -- Matthias Urlichs <matthias@urlichs.de>  Wed, 18 Mar 2026 17:28:06 +0100
+
 dbus-flashmq (15.1) stable; urgency=medium
 
   * Upstream merge.
