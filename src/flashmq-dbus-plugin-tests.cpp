@@ -23,7 +23,7 @@ AuthResult dbus_flashmq::acl_check_helper(
     const std::string &topic, const std::string &payload)
 {
     std::vector<std::string> subtopics = splitToVector(topic, '/');
-    return flashmq_plugin_acl_check(thread_data, access, clientid, username, topic, subtopics, "", payload, 0, false, {}, {}, nullptr);
+    return flashmq_plugin_acl_check(thread_data, access, clientid, username, topic, subtopics, "", payload, 0, false, {}, {}, {}, {}, nullptr);
 }
 
 int integration_permission_tests(void *data)

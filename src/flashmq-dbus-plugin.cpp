@@ -114,11 +114,8 @@ AuthResult auth_success_or_delayed_fail(
         return AuthResult::success;
     }
 
-    auto f = [client, result]() {
-        flashmq_continue_async_authentication(client, result, "", "");
-    };
     const uint32_t delay = get_random<uint32_t>() % 5000 + 1000;
-    flashmq_add_task(f, delay);
+    flashmq_continue_async_authentication_v4(client, result, "", "", delay);
     flashmq_logf(LOG_NOTICE, "Sending delayed deny for login with '%s'", username.c_str());
     return AuthResult::async;
 }
@@ -509,10 +506,12 @@ AuthResult flashmq_plugin_acl_check(void *thread_data, const AclAccess access, c
                                     const std::string &topic, const std::vector<std::string> &subtopics, const std::string &shareName,
                                     std::string_view payload, const uint8_t qos, const bool retain,
                                     const std::optional<std::string> &correlationData, const std::optional<std::string> &responseTopic,
+                                    const std::optional<std::string> &contentType,
+                                    const std::optional<std::chrono::time_point<std::chrono::steady_clock>> expiresAt,
                                     const std::vector<std::pair<std::string, std::string>> *userProperties)
 {
     (void)thread_data; (void)access; (void)clientid; (void)username; (void)topic; (void)subtopics; (void)shareName;
-    (void)payload; (void)qos; (void)retain; (void)correlationData; (void)responseTopic; (void)userProperties;
+    (void)payload; (void)qos; (void)retain; (void)correlationData; (void)responseTopic; (void)contentType; (void)expiresAt; (void)userProperties;
 
     if (access == AclAccess::subscribe || access == AclAccess::register_will)
         return AuthResult::success;

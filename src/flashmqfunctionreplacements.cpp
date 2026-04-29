@@ -126,9 +126,9 @@ void flashmq_get_client_address_v4(const std::weak_ptr<Client> &client, std::str
         *text = "dummy";
 }
 
-void flashmq_continue_async_authentication(const std::weak_ptr<Client> &client, AuthResult result, const std::string &authMethod, const std::string &returnData)
+void flashmq_continue_async_authentication_v4(const std::weak_ptr<Client> &client, AuthResult result, const std::string &authMethod, const std::string &returnData, const uint32_t delay_in_ms)
 {
-    (void)client; (void) result; (void) authMethod; (void) returnData;
+    (void)client; (void)result; (void)authMethod; (void)returnData; (void)delay_in_ms;
 }
 
 void flashmq_get_session_pointer(const std::string &clientid, const std::string &username, std::weak_ptr<Session> &sessionOut)

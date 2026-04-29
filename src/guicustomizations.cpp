@@ -3,8 +3,8 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
-#include "vendor/json.hpp"
-#include "vendor/flashmq_plugin.h"
+#include <nlohmann/json.hpp>
+#include <flashmq_plugin.h>
 #include "utils.h"
 
 dbus_flashmq::GuiCustomizationEntry::GuiCustomizationEntry(const std::filesystem::path &dir_path) :
