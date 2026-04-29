@@ -9,7 +9,6 @@
 #include <sstream>
 #include <cassert>
 #include <sys/types.h>
-#include <signal.h>
 
 #include "dbus_functions.h"
 #include "dbusutils.h"
@@ -21,6 +20,7 @@
 #include "dbusmessageiteropencontainerguard.h"
 #include "dbuspendingmessagecallguard.h"
 #include "exceptions.h"
+#include "guicustomizations.h"
 
 using namespace dbus_flashmq;
 
@@ -132,7 +132,7 @@ void State::add_dbus_to_mqtt_mapping(const std::string &service, ServiceIdentifi
 
     if (fully_mapped_item.is_vrm_portal_mode())
     {
-        this->vrm_portal_mode = parseVrmPortalMode(fully_mapped_item.get_value().value.as_int());
+        this->vrm_portal_mode = parseVrmPortalMode(fully_mapped_item.get_value().value.as_int<int>());
         this->write_all_bridge_connection_states_debounced();
     }
 
@@ -313,7 +313,7 @@ void State::write_to_dbus(const std::string &topic, const std::string &payload)
     flashmq_logf(LOG_DEBUG, "[Write] Writing '%s' to '%s'", payload.c_str(), topic.c_str());
 
     auto set_value_handler = [](
-            State *state, const std::string &topic, const std::optional<int64_t> &veitem_call_serial, const std::optional<std::string> &caller_id,
+            const std::string &topic, const std::optional<int64_t> &veitem_call_serial, const std::optional<std::string> &caller_id,
             const std::optional<std::string> &ex_message, DBusMessage *msg) {
         int log_type = LOG_NONE;
         std::ostringstream log_msg;
@@ -415,12 +415,12 @@ void State::write_to_dbus(const std::string &topic, const std::string &payload)
         args.push_back(new_value);
         dbus_uint32_t serial = call_method(item.get_service_name(), item.get_path(), "com.victronenergy.BusItem", "SetValue", args, true);
 
-        auto handler = std::bind(set_value_handler, this, topic, veitem_call_serial, caller_id, std::optional<std::string>(), std::placeholders::_1);
+        auto handler = std::bind(set_value_handler, topic, veitem_call_serial, caller_id, std::optional<std::string>(), std::placeholders::_1);
         this->async_handlers[serial] = handler;
     }
     catch (std::exception &ex)
     {
-        set_value_handler(this, topic, veitem_call_serial, caller_id, ex.what(), nullptr);
+        set_value_handler(topic, veitem_call_serial, caller_id, ex.what(), nullptr);
     }
 }
 
@@ -549,6 +549,8 @@ void State::publish_all(const std::optional<std::string> &payload_echo)
         }
     }
 
+    guiCustomizations.publish_customizations(this->unique_vrm_id, nullptr, nullptr);
+
     std::ostringstream done_topic;
     done_topic << "N/" << unique_vrm_id << "/full_publish_completed";
 
@@ -609,8 +611,14 @@ void State::remove_id_to_owner(const std::string &owner)
  * Read a fresh value and make sure item is added. This is because a path may not always send
  * PropertiesChanged (eg /vebus/Hub4/L1/AcPowerSetpoint) but can nevertheless be read.
  */
-void State::handle_read(const std::string &topic)
+void State::handle_read(const std::string &topic, const std::vector<std::string> &subtopics)
 {
+    if (subtopics.at(2) == std::string_view("GuiCustomizations"))
+    {
+        this->guiCustomizations.publish_customizations(this->unique_vrm_id, &topic, &subtopics);
+        return;
+    }
+
     try
     {
         const Item &item = find_item_by_mqtt_path(topic);
@@ -742,7 +750,7 @@ bool State::match_local_net(const sockaddr *addr) const
 
 void State::write_bridge_connection_state(const std::string &bridge, const std::optional<bool> connected, const std::string &msg)
 {
-    auto answer_handler = [](State *state, const std::string &path, DBusMessage *msg) {
+    auto answer_handler = [](const std::string &path, DBusMessage *msg) {
         const int msg_type = dbus_message_get_type(msg);
 
         if (msg_type == DBUS_MESSAGE_TYPE_ERROR)
@@ -767,7 +775,7 @@ void State::write_bridge_connection_state(const std::string &bridge, const std::
                     "com.victronenergy.platform",
                     "SetValue", {bool_variant}, true);
 
-        auto handler = std::bind(answer_handler, this, path, std::placeholders::_1);
+        auto handler = std::bind(answer_handler, path, std::placeholders::_1);
         this->async_handlers[serial] = handler;
     }
 
@@ -781,7 +789,7 @@ void State::write_bridge_connection_state(const std::string &bridge, const std::
                     "com.victronenergy.platform",
                     "SetValue", {msg_variant}, true);
 
-        auto handler = std::bind(answer_handler, this, path, std::placeholders::_1);
+        auto handler = std::bind(answer_handler, path, std::placeholders::_1);
         this->async_handlers[serial] = handler;
     }
 }
@@ -1027,17 +1035,17 @@ const std::vector<DBusWatch*> &Watch::get_watches() const
     return watches;
 }
 
-int Watch::get_combined_epoll_flags()
+uint32_t Watch::get_combined_epoll_flags()
 {
-    int result = 0;
+    uint32_t result = 0;
 
     for (DBusWatch *watch : watches)
     {
         if (!dbus_watch_get_enabled(watch))
             continue;
 
-        int dbus_flags = dbus_watch_get_flags(watch);
-        int epoll_flags = dbus_watch_flags_to_epoll(dbus_flags);
+        unsigned int dbus_flags = dbus_watch_get_flags(watch);
+        uint32_t epoll_flags = dbus_watch_flags_to_epoll(dbus_flags);
         result |= epoll_flags;
     }
 

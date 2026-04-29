@@ -6,6 +6,7 @@
 #include "testerglobals.h"
 #include "utils.h"
 #include "state.h"
+#include "guicustomizations.h"
 
 #define MAX_EVENTS 25
 
@@ -119,6 +120,8 @@ int pre_event_loop_test(void *data)
 
 int main(int argc, char **argv)
 {
+    (void) argc; (void)argv;
+
     tests_init_once();
 
     if (!crypt_match("hallo", "$2a$08$LBfjL0PfMBbjWxCzLBfjLurkA7K0tuDn44rNUXDBvatSgSqHvwaHS"))
@@ -143,12 +146,15 @@ int main(int argc, char **argv)
     struct epoll_event events[MAX_EVENTS];
     memset(&events, 0, sizeof (struct epoll_event)*MAX_EVENTS);
 
+    GuiCustomizations g;
+    g.scan();
+
     while (true)
     {
         const uint32_t next_task_delay = globals->delayedTasks.getTimeTillNext();
         const uint32_t epoll_wait_time = std::min<uint32_t>(next_task_delay, 100);
 
-        const int num_fds = epoll_wait(globals->epoll_fd, events, MAX_EVENTS, epoll_wait_time);
+        const int num_fds = epoll_wait(globals->epoll_fd, events, MAX_EVENTS, static_cast<int>(epoll_wait_time));
 
         if (epoll_wait_time == 0)
         {

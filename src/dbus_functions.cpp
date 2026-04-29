@@ -2,17 +2,17 @@
 
 #include "dbus_functions.h"
 #include "state.h"
-#include "utils.h"
 #include "dbusmessageguard.h"
 
 #include "dbusutils.h"
 #include "dbuserrorguard.h"
-#include "dbusmessageitersignature.h"
 
 using namespace dbus_flashmq;
 
 void dbus_flashmq::dbus_dispatch_status_function(DBusConnection *connection, DBusDispatchStatus new_status, void *data)
 {
+    (void) connection;
+
     State *state = static_cast<State*>(data);
 
     if (new_status == DBusDispatchStatus::DBUS_DISPATCH_DATA_REMAINS)
@@ -36,7 +36,7 @@ dbus_bool_t dbus_flashmq::dbus_add_watch_function(DBusWatch *watch, void *data)
 
     try
     {
-        int epoll_events = w->get_combined_epoll_flags();
+        uint32_t epoll_events = w->get_combined_epoll_flags();
         flashmq_poll_add_fd(fd, epoll_events, w);
     }
     catch (std::exception &ex)
@@ -67,7 +67,7 @@ void dbus_flashmq::dbus_remove_watch_function(DBusWatch *watch, void *data)
     try
     {
         if (w->empty())
-            flashmq_poll_remove_fd(fd);
+            flashmq_poll_remove_fd(static_cast<uint32_t>(fd)); // flashmq_poll_remove_fd having uint32_t as fd is a bug, but we have to deal with it.
     }
     catch (std::exception &ex)
     {
@@ -92,19 +92,25 @@ void dbus_flashmq::dbus_timeout_do_handle(DBusTimeout *timeout)
         auto f = std::bind(&dbus_timeout_do_handle, timeout);
         int interval = dbus_timeout_get_interval(timeout);
 
-        flashmq_add_task(f, interval);
+        if (interval >= 0)
+            flashmq_add_task(f, static_cast<uint32_t>(interval));
     }
 }
 
 dbus_bool_t dbus_flashmq::dbus_add_timeout_function(DBusTimeout *timeout, void *data)
 {
+    (void)data;
+
     auto f = std::bind(&dbus_timeout_do_handle, timeout);
     int interval = dbus_timeout_get_interval(timeout);
+
+    if (interval < 0)
+        return false;
 
     try
     {
         // Just storing the id as address, because it saves allocation.
-        uint32_t id = flashmq_add_task(f, interval);
+        uint32_t id = flashmq_add_task(f, static_cast<uint32_t>(interval));
         int *id2 = reinterpret_cast<int*>(id);
         dbus_timeout_set_data(timeout, id2, nullptr);
     }
@@ -119,10 +125,12 @@ dbus_bool_t dbus_flashmq::dbus_add_timeout_function(DBusTimeout *timeout, void *
 
 void dbus_flashmq::dbus_remove_timeout_function(DBusTimeout *timeout, void *data)
 {
+    (void)data;
+
     try
     {
         int *id2 = static_cast<int*>(dbus_timeout_get_data(timeout));
-        uint32_t id = reinterpret_cast<intptr_t>(id2);
+        uint32_t id = reinterpret_cast<uintptr_t>(id2);
         flashmq_remove_task(id);
     }
     catch (std::exception &ex)
@@ -133,6 +141,8 @@ void dbus_flashmq::dbus_remove_timeout_function(DBusTimeout *timeout, void *data
 
 void dbus_flashmq::dbus_toggle_timeout_function(DBusTimeout *timeout, void *data)
 {
+    (void)timeout; (void)data;
+
     // Say whaaaat?!
     //flashmq_logf(LOG_ERR, "What do I do here?");
 }
@@ -193,6 +203,8 @@ void dbus_flashmq::dbus_pending_call_notify(DBusPendingCall *pending, void *data
 
 DBusHandlerResult dbus_flashmq::dbus_handle_message(DBusConnection *connection, DBusMessage *message, void *user_data)
 {
+    (void) connection;
+
     const char *_signal_name = dbus_message_get_member(message);
     const std::string signal_name(_signal_name ? _signal_name : "");
 

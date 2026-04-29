@@ -258,9 +258,7 @@ std::unique_ptr<std::vector<VeVariant> > VeVariant::make_array(DBusMessageIter *
     if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY)
         throw ValueError("Calling make_array() on something other than array.");
 
-    const int n = dbus_message_iter_get_element_count(iter);
     std::unique_ptr<std::vector<VeVariant>> result = std::make_unique<std::vector<VeVariant>>();
-    result->reserve(n);
 
     DBusMessageIter array_iter;
     dbus_message_iter_recurse(iter, &array_iter);
@@ -438,37 +436,6 @@ nlohmann::json VeVariant::as_json_value(bool mask) const
     default:
         return "unknown_type";
     }
-}
-
-// Kind of a placeholder. It may need to be templated if I use it more seriously.
-int VeVariant::as_int() const
-{
-    switch (this->type)
-    {
-    case VeVariantType::IntegerSigned16:
-        return i16;
-    case VeVariantType::IntegerSigned32:
-        return i32;
-    case VeVariantType::IntegerSigned64:
-        return i64;
-    case VeVariantType::IntegerUnsigned8:
-        return u8;
-    case VeVariantType::IntegerUnsigned16:
-        return u16;
-    case VeVariantType::IntegerUnsigned32:
-        return u32;
-    case VeVariantType::IntegerUnsigned64:
-        return u64;
-    case VeVariantType::Double:
-        return static_cast<int>(d);
-    case VeVariantType::Boolean:
-        return static_cast<int>(bool_val);
-        break;
-    default:
-        return 0;
-    }
-
-    return 0;
 }
 
 int VeVariant::get_dbus_type() const

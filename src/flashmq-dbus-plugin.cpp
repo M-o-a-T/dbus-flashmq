@@ -2,7 +2,6 @@
 #include <dbus-1.0/dbus/dbus.h>
 #include <stdexcept>
 #include <sys/epoll.h>
-#include <mutex>
 #include <unistd.h>
 #include <string.h>
 #include <thread>
@@ -27,6 +26,8 @@ int flashmq_plugin_version()
 extern "C"
 void flashmq_plugin_allocate_thread_memory(void **thread_data, std::unordered_map<std::string, std::string> &plugin_opts)
 {
+    (void) plugin_opts;
+
     State *state = new State();
     *thread_data = state;
 }
@@ -34,6 +35,8 @@ void flashmq_plugin_allocate_thread_memory(void **thread_data, std::unordered_ma
 extern "C"
 void flashmq_plugin_deallocate_thread_memory(void *thread_data, std::unordered_map<std::string, std::string> &plugin_opts)
 {
+    (void) plugin_opts;
+
     State *state = static_cast<State*>(thread_data);
     delete state;
 }
@@ -41,6 +44,8 @@ void flashmq_plugin_deallocate_thread_memory(void *thread_data, std::unordered_m
 extern "C"
 void flashmq_plugin_main_init(std::unordered_map<std::string, std::string> &plugin_opts)
 {
+    (void) plugin_opts;
+
     flashmq_logf(LOG_NOTICE, "Starting dbus-flashmq version %s", std::to_string(version).c_str());
     dbus_threads_init_default();
 }
@@ -79,6 +84,8 @@ void flashmq_plugin_init(void *thread_data, std::unordered_map<std::string, std:
 extern "C"
 void flashmq_plugin_deinit(void *thread_data, std::unordered_map<std::string, std::string> &plugin_opts, bool reloading)
 {
+    (void) plugin_opts;
+
     // As of yet, we don't do reload actions.
     if (reloading)
         return;
@@ -230,6 +237,8 @@ AuthResult flashmq_plugin_login_check(
     void *thread_data, const std::string &clientid, const std::string &username, const std::string &password,
     const std::vector<std::pair<std::string, std::string>> *userProperties, const std::weak_ptr<Client> &client)
 {
+    (void)userProperties;
+
     if (!thread_data)
         return AuthResult::error;
 
@@ -312,6 +321,10 @@ bool flashmq_plugin_alter_publish(void *thread_data, const std::string &clientid
                                   std::string_view payload, uint8_t &qos, bool &retain, const std::optional<std::string> &correlationData,
                                   const std::optional<std::string> &responseTopic, std::vector<std::pair<std::string, std::string>> *userProperties)
 {
+    (void)thread_data; (void)access; (void)clientid; (void)topic; (void)subtopics;
+    (void)payload; (void)qos; (void)retain; (void)correlationData; (void)responseTopic;
+    (void)userProperties;
+
     State *state = static_cast<State*>(thread_data);
 
     if (!state)
@@ -339,7 +352,7 @@ bool flashmq_plugin_alter_publish(void *thread_data, const std::string &clientid
 }
 
 void handle_venus_actions(
-    State *state, const std::string &action, const std::string &system_id, const std::string &username,
+    State *state, const std::string &action, const std::string &username,
     const std::string &topic, const std::vector<std::string> &subtopics, std::string_view payload)
 {
     // Wo only work on strings like R/<portalid>/system/0/Serial.
@@ -369,7 +382,7 @@ void handle_venus_actions(
 
             if (path != "keepalive")
             {
-                state->handle_read(topic);
+                state->handle_read(topic, subtopics);
             }
         }
     }
@@ -443,9 +456,7 @@ void handle_venus_actions(
  *
  * Username example from the connecting client: token/evcharger/HQ2501ABCDE
  */
-AuthResult handle_paired_integration_client_auth(
-    State *state, const AclAccess access, const std::string &clientid, const std::string &username,
-    const std::string &topic, const std::vector<std::string> &subtopics)
+AuthResult handle_paired_integration_client_auth(const AclAccess access, const std::string &username, const std::vector<std::string> &subtopics)
 {
     if (access == AclAccess::subscribe)
         return AuthResult::success;
@@ -500,6 +511,9 @@ AuthResult flashmq_plugin_acl_check(void *thread_data, const AclAccess access, c
                                     const std::optional<std::string> &correlationData, const std::optional<std::string> &responseTopic,
                                     const std::vector<std::pair<std::string, std::string>> *userProperties)
 {
+    (void)thread_data; (void)access; (void)clientid; (void)username; (void)topic; (void)subtopics; (void)shareName;
+    (void)payload; (void)qos; (void)retain; (void)correlationData; (void)responseTopic; (void)userProperties;
+
     if (access == AclAccess::subscribe || access == AclAccess::register_will)
         return AuthResult::success;
 
@@ -534,7 +548,7 @@ AuthResult flashmq_plugin_acl_check(void *thread_data, const AclAccess access, c
              */
             if (system_id == "local")
             {
-                AuthResult preliminary_result = handle_paired_integration_client_auth(state, access, clientid, username, topic, subtopics);
+                AuthResult preliminary_result = handle_paired_integration_client_auth(access, username, subtopics);
 
                 if (preliminary_result == AuthResult::acl_denied)
                 {
@@ -620,7 +634,7 @@ AuthResult flashmq_plugin_acl_check(void *thread_data, const AclAccess access, c
             }
 
             // The rest is not auth as such, but take actions based on the messages.
-            handle_venus_actions(state, action, system_id, username, topic, subtopics, payload);
+            handle_venus_actions(state, action, username, topic, subtopics, payload);
         }
         else if (access == AclAccess::read)
         {
@@ -723,9 +737,9 @@ void flashmq_plugin_poll_event_received(void *thread_data, int fd, uint32_t even
             continue;
 
         // Adding the implicit error flags to flags_of_watch.
-        int flags_of_watch = dbus_watch_get_flags(watch) | (DBusWatchFlags::DBUS_WATCH_ERROR | DBusWatchFlags::DBUS_WATCH_HANGUP);
-        int readiness_in_dbus_flags = epoll_flags_to_dbus_watch_flags(events);
-        int match_flags = flags_of_watch & readiness_in_dbus_flags;
+        unsigned int flags_of_watch = dbus_watch_get_flags(watch) | (DBusWatchFlags::DBUS_WATCH_ERROR | DBusWatchFlags::DBUS_WATCH_HANGUP);
+        unsigned int readiness_in_dbus_flags = epoll_flags_to_dbus_watch_flags(events);
+        unsigned int match_flags = flags_of_watch & readiness_in_dbus_flags;
 
         if (!dbus_watch_handle(watch, match_flags))
         {
