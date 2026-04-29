@@ -1,3 +1,9 @@
+dbus-flashmq (23.2) stable; urgency=medium
+
+  * Upstream merge.
+
+ -- Matthias Urlichs <matthias@urlichs.de>  Wed, 29 Apr 2026 07:34:09 +0200
+
 dbus-flashmq (21.1) unstable; urgency=medium
 
   * Upstream merge.
